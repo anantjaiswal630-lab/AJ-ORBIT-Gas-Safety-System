@@ -1,0 +1,95 @@
+/*
+ * Smart LPG Gas Safety & Leak Alert System
+ * Developed by The Bhadohi Coder / AJ_ORBIT
+ */
+
+#include <Servo.h>
+#include <SoftwareSerial.h>
+
+// Define component pins
+const int gasSensorPin = A0;   // MQ-5 Analog pin
+const int rxPin = 2;           // GSM RX pin
+const int txPin = 3;           // GSM TX pin
+const int relayPin = 4;        // Relay for Buzzer
+const int switchPin = 5;       // Switch on the regulator
+const int servoPin = 9;        // Servo motor signal pin
+
+// Create objects
+Servo gasServo;
+SoftwareSerial gsm(rxPin, txPin);
+
+// Thresholds and Timers
+const int gasThreshold = 400;             // Adjust this value based on your MQ-5 testing
+const unsigned long tenMinutes = 600000;  // 10 minutes in milliseconds (10 * 60 * 1000)
+
+// State variables
+unsigned long regulatorTurnedOnTime = 0;
+bool regulatorIsOn = false;
+bool alarmTriggered = false;
+
+void setup() {
+  Serial.begin(9600);
+  gsm.begin(9600); // Default baud rate for most SIM800L modules
+  
+  pinMode(relayPin, OUTPUT);
+  pinMode(switchPin, INPUT_PULLUP); // Uses internal resistor. LOW = Switch Pressed (Regulator ON)
+
+  // Initialize components
+  digitalWrite(relayPin, HIGH); // Assuming active-LOW relay (HIGH keeps buzzer OFF)
+  gasServo.attach(servoPin);
+  gasServo.write(0); // Set servo to default 'Regulator ON' position (0 degrees)
+  
+  Serial.println("System Initialized...");
+  delay(3000); // Allow GSM and Sensor to warm up
+}
+
+void loop() {
+  int currentGasLevel = analogRead(gasSensorPin);
+  bool isSwitchPressed = (digitalRead(switchPin) == LOW); // LOW means regulator is ON
+
+  // --- 1. GAS LEAK DETECTION ---
+  if (currentGasLevel > gasThreshold && !alarmTriggered) {
+    Serial.println("DANGER: High Gas Level Detected!");
+    triggerSafetyProtocol();
+  }
+
+  // --- 2. 10-MINUTE TIMER LOGIC ---
+  if (isSwitchPressed && !regulatorIsOn) {
+    // Regulator just got turned on, start the clock
+    regulatorIsOn = true;
+    regulatorTurnedOnTime = millis();
+    Serial.println("Regulator turned ON. 10-minute timer started.");
+    
+  } else if (!isSwitchPressed && regulatorIsOn) {
+    // Regulator was turned off manually before 10 mins
+    regulatorIsOn = false;
+    Serial.println("Regulator turned OFF manually. Timer reset.");
+  }
+
+  // If the regulator is ON, check if 10 minutes have passed
+  if (regulatorIsOn && !alarmTriggered) {
+    if (millis() - regulatorTurnedOnTime >= tenMinutes) {
+      Serial.println("WARNING: 10 minutes passed without stove being lit!");
+      triggerSafetyProtocol();
+    }
+  }
+
+  delay(1000); // Check sensor and switch every 1 second
+}
+
+// Function to handle the emergency shutdown and alerts
+void triggerSafetyProtocol() {
+  alarmTriggered = true; 
+
+  // 1. Turn on the Buzzer via Relay (Active LOW)
+  digitalWrite(relayPin, LOW); 
+  
+  // 2. Turn off the Regulator via Servo
+  gasServo.write(90); // Rotate 90 degrees to shut off the valve
+  
+  // 3. Make the Emergency Phone Call
+  Serial.println("Calling emergency contact...");
+  gsm.println("ATD+919876543210;"); // REPLACE THIS WITH YOUR 10-DIGIT NUMBER
+  delay(20000);                     // Let it ring for 20 seconds
+  gsm.println("ATH");               // Hang up the call
+}
